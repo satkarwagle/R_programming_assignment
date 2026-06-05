@@ -44,11 +44,18 @@ export default class MacTahoeQuickSettingsBlur extends Extension {
       return;
     }
 
-    const blurEffect = new Shell.BlurEffect({
-      sigma: BLUR_SIGMA,
-      brightness: BLUR_BRIGHTNESS,
-      saturation: BLUR_SATURATION,
-    });
+    const blurEffect = new Shell.BlurEffect();
+    if ('sigma' in blurEffect) {
+      blurEffect.sigma = BLUR_SIGMA;
+    } else if ('radius' in blurEffect) {
+      blurEffect.radius = BLUR_SIGMA;
+    }
+    if ('brightness' in blurEffect) {
+      blurEffect.brightness = BLUR_BRIGHTNESS;
+    }
+    if ('saturation' in blurEffect) {
+      blurEffect.saturation = BLUR_SATURATION;
+    }
 
     actor.add_effect_with_name(effectName, blurEffect);
     actor.add_style_class_name('mactahoe-glass-blur');
