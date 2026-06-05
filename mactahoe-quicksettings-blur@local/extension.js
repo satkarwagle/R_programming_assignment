@@ -3,9 +3,17 @@ import Shell from 'gi://Shell';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 
-const BLUR_SIGMA = 50;
+const BLUR_SIGMA = 45;
 const BLUR_BRIGHTNESS = 1.0;
-const BLUR_SATURATION = 1.1;
+const BLUR_SATURATION = 1.05;
+const BLUR_TARGET_CLASSES = new Set([
+  'quick-toggle',
+  'quick-toggle-button',
+  'quick-slider',
+  'quick-settings-item',
+  'message',
+  'calendar',
+]);
 
 export default class MacTahoeQuickSettingsBlur extends Extension {
   constructor(metadata) {
@@ -13,14 +21,12 @@ export default class MacTahoeQuickSettingsBlur extends Extension {
     this._blurredActors = [];
     this._signals = [];
     this._idleIds = [];
-    this._styledActors = [];
   }
 
   enable() {
     this._blurredActors = [];
     this._signals = [];
     this._idleIds = [];
-    this._styledActors = [];
     this._bindMenu(Main.panel?.statusArea?.quickSettings?.menu, 'quicksettings');
     this._bindMenu(Main.panel?.statusArea?.dateMenu?.menu, 'datemenu');
   }
@@ -48,14 +54,6 @@ export default class MacTahoeQuickSettingsBlur extends Extension {
       actor.remove_style_class_name('mactahoe-glass-blur');
     }
     this._blurredActors = [];
-
-    for (const actor of this._styledActors) {
-      if (!actor || actor.destroyed) {
-        continue;
-      }
-      actor.remove_style_class_name('mactahoe-glass-root');
-    }
-    this._styledActors = [];
   }
 
   _bindMenu(menu, targetName) {
@@ -84,64 +82,111 @@ export default class MacTahoeQuickSettingsBlur extends Extension {
       return;
     }
 
-    const actors = this._getMenuActors(menu);
+    const actors = this._collectBlurTargets(menu);
     if (actors.length === 0) {
       return;
     }
 
     actors.forEach((actor, index) => {
       const effectName = `${this.uuid}-${targetName}-${index}`;
-      if (actor.get_effect && actor.get_effect(effectName)) {
+      this._applyBlurToActor(actor, effectName);
+    });
+  }
+
+  _collectBlurTargets(menu) {
+    const root =
+      menu.actor ??
+      menu.box ??
+      menu._boxPointer?.bin ??
+      menu._boxPointer?.get_child?.() ??
+      menu;
+
+    if (!root) {
+      return [];
+    }
+
+    const targets = [];
+    const visit = (actor) => {
+      if (!actor) {
         return;
       }
-
-      const blurEffect = this._createBlurEffect();
-      actor.add_effect_with_name(effectName, blurEffect);
-      actor.add_style_class_name('mactahoe-glass-blur');
-
-      this._blurredActors.push({ actor, name: effectName });
-    });
-
-    this._applyStyleTargets(menu);
-  }
-
-  _getMenuActors(menu) {
-    const actors = [];
-    const addActor = (actor) => {
-      if (actor && !actors.includes(actor)) {
-        actors.push(actor);
-      }
-    };
-
-    addActor(menu.actor);
-    addActor(menu.box);
-    addActor(menu._boxPointer);
-    addActor(menu._boxPointer?.bin);
-    addActor(menu._boxPointer?.get_child?.());
-    addActor(menu._boxPointer?.get_first_child?.());
-
-    return actors;
-  }
-
-  _applyStyleTargets(menu) {
-    const targets = [];
-    const addTarget = (actor) => {
-      if (actor && !targets.includes(actor)) {
+      if (this._isBlurTarget(actor)) {
         targets.push(actor);
       }
+      if (actor.get_children) {
+        actor.get_children().forEach((child) => visit(child));
+      }
     };
 
-    addTarget(menu.actor);
-    addTarget(menu.box);
-    addTarget(menu._boxPointer?.bin);
+    visit(root);
+    return targets;
+  }
 
-    targets.forEach((actor) => {
-      if (actor.has_style_class_name?.('mactahoe-glass-root')) {
-        return;
+  _isBlurTarget(actor) {
+    if (!actor?.has_style_class_name) {
+      return false;
+    }
+    for (const className of BLUR_TARGET_CLASSES) {
+      if (actor.has_style_class_name(className)) {
+        return true;
       }
-      actor.add_style_class_name('mactahoe-glass-root');
-      this._styledActors.push(actor);
+    }
+    return false;
+  }
+
+  _applyBlurToActor(actor, effectName) {
+    if (!actor || actor.destroyed) {
+      return;
+    }
+    if (actor.get_effect && actor.get_effect(effectName)) {
+      return;
+    }
+
+    if (!this._actorHasSize(actor)) {
+      this._scheduleBlurRetry(actor, effectName);
+      return;
+    }
+
+    const blurEffect = this._createBlurEffect();
+    actor.add_effect_with_name(effectName, blurEffect);
+    actor.add_style_class_name('mactahoe-glass-blur');
+
+    this._blurredActors.push({ actor, name: effectName });
+  }
+
+  _actorHasSize(actor) {
+    if (!actor?.get_allocation_box) {
+      return false;
+    }
+    const box = actor.get_allocation_box();
+    const width = box.x2 - box.x1;
+    const height = box.y2 - box.y1;
+    return width >= 1 && height >= 1;
+  }
+
+  _scheduleBlurRetry(actor, effectName) {
+    if (actor._mactahoeBlurTimer) {
+      return;
+    }
+    actor._mactahoeBlurAttempts = 0;
+    const id = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+      if (!actor || actor.destroyed) {
+        return GLib.SOURCE_REMOVE;
+      }
+      if (this._actorHasSize(actor)) {
+        actor._mactahoeBlurTimer = null;
+        this._applyBlurToActor(actor, effectName);
+        return GLib.SOURCE_REMOVE;
+      }
+      actor._mactahoeBlurAttempts += 1;
+      if (actor._mactahoeBlurAttempts > 20) {
+        actor._mactahoeBlurTimer = null;
+        return GLib.SOURCE_REMOVE;
+      }
+      return GLib.SOURCE_CONTINUE;
     });
+    actor._mactahoeBlurTimer = id;
+    this._idleIds.push(id);
   }
 
   _createBlurEffect() {
