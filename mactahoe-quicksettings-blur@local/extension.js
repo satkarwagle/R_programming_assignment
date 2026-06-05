@@ -3,9 +3,9 @@ import Shell from 'gi://Shell';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 
-const BLUR_SIGMA = 30;
-const BLUR_BRIGHTNESS = 0.9;
-const BLUR_SATURATION = 1.05;
+const BLUR_SIGMA = 50;
+const BLUR_BRIGHTNESS = 1.0;
+const BLUR_SATURATION = 1.1;
 
 export default class MacTahoeQuickSettingsBlur extends Extension {
   constructor(metadata) {
@@ -13,12 +13,14 @@ export default class MacTahoeQuickSettingsBlur extends Extension {
     this._blurredActors = [];
     this._signals = [];
     this._idleIds = [];
+    this._styledActors = [];
   }
 
   enable() {
     this._blurredActors = [];
     this._signals = [];
     this._idleIds = [];
+    this._styledActors = [];
     this._bindMenu(Main.panel?.statusArea?.quickSettings?.menu, 'quicksettings');
     this._bindMenu(Main.panel?.statusArea?.dateMenu?.menu, 'datemenu');
   }
@@ -40,10 +42,20 @@ export default class MacTahoeQuickSettingsBlur extends Extension {
       if (!actor || actor.destroyed) {
         continue;
       }
-      actor.remove_effect_by_name(name);
+      if (name) {
+        actor.remove_effect_by_name(name);
+      }
       actor.remove_style_class_name('mactahoe-glass-blur');
     }
     this._blurredActors = [];
+
+    for (const actor of this._styledActors) {
+      if (!actor || actor.destroyed) {
+        continue;
+      }
+      actor.remove_style_class_name('mactahoe-glass-root');
+    }
+    this._styledActors = [];
   }
 
   _bindMenu(menu, targetName) {
@@ -89,6 +101,8 @@ export default class MacTahoeQuickSettingsBlur extends Extension {
 
       this._blurredActors.push({ actor, name: effectName });
     });
+
+    this._applyStyleTargets(menu);
   }
 
   _getMenuActors(menu) {
@@ -107,6 +121,27 @@ export default class MacTahoeQuickSettingsBlur extends Extension {
     addActor(menu._boxPointer?.get_first_child?.());
 
     return actors;
+  }
+
+  _applyStyleTargets(menu) {
+    const targets = [];
+    const addTarget = (actor) => {
+      if (actor && !targets.includes(actor)) {
+        targets.push(actor);
+      }
+    };
+
+    addTarget(menu.actor);
+    addTarget(menu.box);
+    addTarget(menu._boxPointer?.bin);
+
+    targets.forEach((actor) => {
+      if (actor.has_style_class_name?.('mactahoe-glass-root')) {
+        return;
+      }
+      actor.add_style_class_name('mactahoe-glass-root');
+      this._styledActors.push(actor);
+    });
   }
 
   _createBlurEffect() {
