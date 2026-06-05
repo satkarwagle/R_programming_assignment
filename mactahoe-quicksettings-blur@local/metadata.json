@@ -1,0 +1,7 @@
+{
+  "uuid": "mactahoe-quicksettings-blur@local",
+  "name": "MacTahoe Quick Settings Blur",
+  "description": "Adds glass-like blur to Quick Settings and Calendar/Notifications.",
+  "shell-version": ["49"],
+  "version": 1
+}
